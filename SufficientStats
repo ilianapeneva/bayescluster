@@ -1,0 +1,40 @@
+# R script to update sufficient statistics
+
+
+##-------------------------------------------------
+## UPDATED SUFFICIENT STATISTICS FUNCTIONS --------
+##-------------------------------------------------
+# function to compute the cluster mean without a data point
+mean.new <- function(meanCluster,nPoints, xstar){
+   (1/(nPoints-1))*(nPoints*as.matrix(meanCluster) - xstar)
+
+}
+
+
+# function to compute the cluster covariance without a data point
+cov.new <- function(covCluster, meanCluster, nPoints, xstar){
+  
+  
+  # covariance of the cluster without xstar
+  (1/(nPoints-1))*(nPoints*(as.matrix(covCluster) + as.matrix(meanCluster)%*%t(as.matrix(meanCluster))) - (as.matrix(xstar))%*%t(as.matrix(xstar)) ) - (as.matrix(mean.new(meanCluster, nPoints, xstar)))%*%t(as.matrix(mean.new(meanCluster,nPoints, xstar)))
+  
+}
+
+##-------------------------------------------------
+## ADDING XSTAR SUFFICIENT STATISTICS -------------
+##-------------------------------------------------
+mean.add <- function(meanCluster,nPoints, xstar){
+  
+  # mean of the cluster with xstar
+  (1/(nPoints+1))*((nPoints* as.matrix(meanCluster)) + xstar)
+  
+}
+
+
+cov.add <- function(covCluster, meanCluster, nPoints, xstar){
+  
+  
+  # covariance of the cluster with xstar
+  (1/(nPoints+1))*(nPoints*(as.matrix(covCluster)+ as.matrix(meanCluster)%*%t(as.matrix(meanCluster))) + (as.matrix(xstar))%*%t(as.matrix(xstar))) - (as.matrix(mean.add(meanCluster, nPoints, xstar)))%*%t(as.matrix(mean.add(meanCluster, nPoints, xstar)))
+  
+}
