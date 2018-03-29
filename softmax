@@ -1,0 +1,10 @@
+# R script to peform softmax  - more stable than exp(x) / sum(exp(x))
+
+logsumexp <- function (x) {
+  y = max(x)
+  y + log(sum(exp(x - y)))
+}
+
+softmax <- function (x) {
+  exp(x - logsumexp(x))
+}
