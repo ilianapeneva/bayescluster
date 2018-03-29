@@ -1,0 +1,60 @@
+
+#R script to compute the log posterior of the BayesCluster (discrete) model 
+library(mvnfast)
+library(gmp)
+
+# Input: z.s - the latent variables which we cluster
+#        dataMatrix1 - the first dataset
+#        nPcomponents - number of principal components
+#        mean.ppca - the means of the clusters
+#        Cind - a vector containing the cluster allocation
+#        nClusters - number of clusters of latent variables
+# Output: the log posterior of the model
+logposterior_BC_1discds <- function(dataMatrix, nPcomponents, nCategories, z.s,Cind_i, ClustersWithPoints, W.ds, mu.ds,  Nclusters, mean.clust, alpha, nClPoints){
+  nFeatures    <- ncol(dataMatrix)
+  nDataItems   <- nrow(dataMatrix)
+  likelihood1  <- vector("list",nFeatures)      
+  likelihood2  <- vector("list",nFeatures)
+ 
+  # cluster means 
+  logposterior.1    <- sum(dmvn(mean.clust, rep(0,nPcomponents), sigma = diag(1, nPcomponents), log = TRUE))
+ 
+  # latent variables 
+  likelihood     <- lapply(1:Nclusters, function(k) dmvn(z.s[which(Cind_i==ClustersWithPoints[k]),], mean.clust[k,], sigma= diag(1,nPcomponents), log = TRUE))
+  logposterior.2 <- do.call(sum, likelihood)
+  
+  # likelihood  
+  logp <- rep(0, nDataItems)                     # log-posterior from the categorical data likelihood 
+  
+  for (j in 1:nDataItems){
+    softmax.product <- 0   # initialise the sofmax product to be 1
+    for (s in 1:nFeatures){
+      softmax.product <- softmax.product + log((softmax(z.s[j,]%*%W.ds[[s]]+mu.ds[[s]])[dataMatrix[j,s]]))
+      
+    }
+    logp[j] <- softmax.product
+  }
+
+  logposterior.3    <- sum(logp)
+  
+  
+  # cluster indicators
+  log.part          <- c()
+  for (i in 1:Nclusters){
+    log.part[i]     <- log(factorialZ(nClPoints[i]-1 + alpha/Nclusters))
+  }
+  logposterior.4    <- sum(log.part) - Nclusters*lgamma(alpha/Nclusters) + lgamma(alpha) - log(factorialZ(nDataItems-1+alpha)) 
+ 
+  
+  # loadings and offsets 
+  log.loadings <- do.call(cbind, lapply(1:nFeatures, function(i) likelihood1[[i]] = dmvnorm(W.ds[[i]], rep(0,nCategories[i]), sigma = diag(1,nCategories[i]), log = TRUE)))
+  log.offset   <- do.call(cbind, lapply(1:nFeatures, function(i) likelihood2[[i]] = dmvnorm(mu.ds[[i]], rep(0,nCategories[i]), sigma = diag(1,nCategories[i]), log = TRUE)))
+  
+  
+  logposterior.5    <- sum(log.loadings)
+  logposterior.6    <- sum(log.offset)
+  
+  # all logposterior 
+  logposterior_BC_disc  <- logposterior.1 + logposterior.2 + logposterior.3 + logposterior.4 + logposterior.5 + logposterior.6
+  logposterior_BC_disc
+}
