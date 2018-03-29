@@ -1,0 +1,69 @@
+# BayesCluster (continuous data) parameter inference with simulated annealing
+
+
+# noise proposal eps1
+proposalNoise1 <- function(noiseSigma21){
+  add.noise <- rnorm(1, mean=0, sd = 0.001)
+  return(add.noise+noiseSigma21)
+  
+}
+
+
+
+# latent variables proposal
+proposalZs <- function(latentvar){
+  random.noise <- rmvn(nrow(latentvar), rep(0,ncol(latentvar)), diag(0.001, ncol(latentvar)))
+  return(latentvar+random.noise)
+}
+
+# getting W from dataMatrix1, and latent z using least squares
+gettingWls <- function(z.mat, dataMatrix){
+  z.prod <- t(z.mat)%*%z.mat
+  z.inv  <- solve(z.prod, tol = 1e-38)
+  
+  # getting the estimate for W
+  W <- t(dataMatrix)%*%z.mat%*%t(z.inv)
+}
+
+
+
+
+MH_cont_SA1ds<- function(z.s, current_t, dataMatrix, nPcomponents, Cind_i, ClustersWithPoints, W.m1, sigma2.1, C.1, Nclusters, meanClust, alpha,nClPoints){
+  
+  propNoise1   <- proposalNoise1(sigma2.1)             # get the proposal  for the noise sigma2.1
+  propZ        <- proposalZs(z.s)                      # get the proposals for the latent variables
+  propW1       <- gettingWls(z.s, dataMatrix)
+  propMeans    <- matrix(data = NA, nrow = Nclusters, ncol = nPcomponents)
+ 
+  
+  for (i in 1:Nclusters){
+    propMeans[i,]   <- colMeans(as.matrix(propZ[which(Cind_i==ClustersWithPoints[i]),]))
+  }
+  
+  nFeatures    <- ncol(dataMatrix)
+  
+  
+  
+  # dataMatrix, nPcomponents, z.s,Cind_i, ClustersWithPoints, W.m1,sigma2.1, C.1,Nclusters, mean.clust, alpha, nClPoints
+  # the probability of a move
+  prob     = exp((logposterior_BC_1ds(dataMatrix, nPcomponents, propZ,Cind_i, ClustersWithPoints, propW1,propNoise1, C.1, Nclusters, propMeans, alpha, nClPoints)
+                  -logposterior_BC_1ds(dataMatrix,nPcomponents, z.s, Cind_i, ClustersWithPoints, W.m1, sigma2.1, C.1, Nclusters, meanClust, alpha, nClPoints))/current_t) # change in the posterior
+ 
+  if (runif(1)<prob){
+    newZ       = propZ         # accept the proposal
+    newW1      = propW1 
+    newNoise1  = propNoise1
+    newMeans   = propMeans
+    
+  }
+  else{ 
+    newZ       = z.s    # reject the proposal
+    newW1      = W.m1 
+    newNoise1  = sigma2.1
+    newMeans   = meanClust
+    
+  }
+  
+  return(list(zs = newZ, W1 = newW1, sigma2.1 = newNoise1, means = newMeans))  
+  
+} 
