@@ -1,0 +1,54 @@
+#R script to compute the log posterior of the BayesCluster (continuous) model 
+library(mvnfast)
+library(gmp)
+
+# Input: z.s - the latent variables which we cluster
+#        dataMatrix1 - the first dataset
+#        nPcomponents - number of principal components
+#        mean.ppca - the means of the clusters
+#        Cind - a vector containing the cluster allocation
+#        nClusters - number of clusters of latent variables
+#        W.m1 - the loadings matrix for the first dataset
+#        C.m1 - the covariance matrix for the first dataset
+#        sigma2.1 - the error for the first dataset
+# Output: the log posterior of the model
+logposterior_BC_1ds <- function(dataMatrix, nPcomponents, z.s,Cind_i, ClustersWithPoints, W.m1,sigma2.1, C.1,Nclusters, mean.clust, alpha, nClPoints){
+  nFeatures    <- ncol(dataMatrix)
+  nDataItems   <- nrow(dataMatrix)
+  likelihood    = vector("list",Nclusters)      
+  likelihood1 <- c()
+  
+  # cluster means 
+  logposterior.1    <- sum(dmvn(mean.clust, rep(0,nPcomponents), sigma = diag(1, nPcomponents), log = TRUE))
+ 
+  
+  # latent variables 
+  likelihood     <- lapply(1:Nclusters, function(k) dmvn(z.s[which(Cind_i==ClustersWithPoints[k]),], mean.clust[k,], sigma= diag(1,nPcomponents), log = TRUE))
+  logposterior.2 <- do.call(sum, likelihood)
+  
+  
+  # likelihood (dataset 1)
+  likelihood1    <- sapply(1:nDataItems, function(i) dmvn(dataMatrix[i,], z.s[i,]%*%t(W.m1) , sigma = sigma2.1*diag(1,nFeatures), log = TRUE)) 
+   logposterior.3 <- sum(likelihood1)
+  
+  # cluster indicators
+  log.part          <- c()
+  for (i in 1:Nclusters){
+    log.part[i]     <- log(factorialZ(nClPoints[i]-1 + alpha/Nclusters))
+  }
+  logposterior.4    <- sum(log.part) - Nclusters*lgamma(alpha/Nclusters) + lgamma(alpha) - log(factorialZ(nDataItems-1+alpha)) 
+  
+  # noise (dataset 1)
+  logposterior.5 <- dgamma(sigma2.1, 1,1, log = TRUE)  # scale = shape = 1
+  
+  
+  # loadings (dataset 1) - N(0,I) prior on the columns
+  logposterior.6    <- sum(dmvn(W.m1, rep(0, nPcomponents), sigma = diag(1,nPcomponents), log = TRUE))  
+  
+  
+  
+  # all logposterior 
+  logposterior_BC_CD1   <- logposterior.1 + logposterior.2 + logposterior.3 + logposterior.4 + logposterior.5 + logposterior.6
+  
+  logposterior_BC_CD1
+}
