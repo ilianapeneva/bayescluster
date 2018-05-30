@@ -1,0 +1,5 @@
+# BIC for the continuous case 
+
+bic.bc <- function(dataMatrix, logposterior, nClusters, nPcomponents){
+  2*logposterior - (ncol(dataMatrix)*nPcomponents+1 - nPcomponents*(nPcomponents-1)/2 + nClusters*nPcomponents)*log(nrow(dataMatrix))
+}
