@@ -1,0 +1,5 @@
+# BIC computation for the BayesCluster discrete
+
+bic.bcdisc <- function(dataMatrix, logposterior, nClusters, nFeatures, nPcomponents){
+  2*logposterior - (nFeatures*nPcomponents - nPcomponents*(nPcomponents-1)/2 + nClusters*nPcomponents + nFeatures*nPcomponents)*log(nrow(dataMatrix))
+}
