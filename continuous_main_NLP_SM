@@ -1,0 +1,348 @@
+# R script to do multiple initialisations of BayesCluster (1 cont dataset)
+
+#  R script of BayesCluster (continuous) with simulated annealing and split - merge 
+
+library(mvnfast)
+library(pcaMethods)
+library(mvtnorm)
+library(mombf)
+library(invgamma)
+
+# PARAMETERS ###
+# dataMatrix = dataset we want to cluster
+# nPcomponents = latent dimensionality 
+# nClusters = number of initial clusters
+# start_temp = starting temperature for the simulated annealing
+# C_k = cooling schedule
+# alpha = initial value of the concentration parameter
+# g = dispersion parameter
+# nIterations = number of iterations 
+# nstart = number of different initialisations
+# tol = tolerance we use to compare the log posteriors
+
+###
+
+
+##-------------------------------------------------
+## BAYESCLUSTER (CONTINUOUS) WITH NON-LOCAL PRIORS-
+##-------------------------------------------------
+
+BayesClusterNLP_1contds_multinit <- function(dataMatrix, nPcomponents, nClusters, start_temp, C_k, alpha,g, nIterations, nstart, tol = 1e-3){
+  nDataItems  <- nrow(dataMatrix)                                           # number of data points we have
+  nFeatures   <- ncol(dataMatrix)                                           # dimension of data 1
+  
+  
+  # highest logposterior from all initialisations
+  max.logposterior <- -Inf                                                  # the highest log posterior - initialised to be -inf
+  max.partition    <- c()                                                   # keep the partition which corresponds to the highest log posterior
+  
+ 
+  for (s in 1:nstart){ 
+    cat("Starting  initialisation", s, "...", fill=TRUE)
+    ### INITIALISATION ####
+    dm.ppca  <- pca(dataMatrix, nPcs = nPcomponents, method = "ppca", scale = "none", center = FALSE)
+    z        <- dm.ppca@scores
+    W1       <- dm.ppca@loadings
+    sigma2.1 <- rinvgamma(1,1,1)
+    C.1      <- W1%*%t(W1) + sigma2.1*diag(1,nFeatures)
+    
+    
+    Cind      <- matrix(data = NA, nrow = nDataItems, ncol = nIterations)      # cluster allocation matrix
+    mean.ppca <- matrix(data = NA, nrow = nDataItems, ncol = nPcomponents)     # matrix to store the means of the clusters
+    nClPoints <- c()                                                           # empty vector to store the number of points in each cluster
+    
+    
+    logposterior     <- c()                                                    # the log posterior at the current iteration
+    
+    
+    Cind[,1] <- kmeans(z, centers = nClusters)$cluster               # using k-means initialisation
+    #plot(z, col = Cind[,1])
+    current_temp    <- c()     # saving the cooling temperature
+    current_temp[1] <- start_temp
+    
+    converged <- c()         # converge indicator vector
+    
+    # initialise the number of points, mean.ppca and the cov.ppca list to keep them updated
+    for (i in 1:nClusters){
+      mean.ppca[i,]   <- colMeans(z[which(Cind[,1]==i),])
+      nClPoints[i]    <- nrow(z[which(Cind[,1]==i),])
+    }
+    
+    # lists/matrices to store the MH updates
+    z.chain       <- matrix(data = NA, nrow = nIterations*nDataItems, ncol = nPcomponents)     # latent variables
+    mean.chain    <- matrix(data = NA, nrow = nIterations*nDataItems, ncol = nPcomponents)     # cluster means
+    W1.chain      <- list()     # loadings 
+    sigma21.chain <- c()        # error terms 
+    
+    # fill in the MH chains
+    z.chain[1:nDataItems,]     <- z
+    mean.chain[1:nDataItems,]  <- mean.ppca[1:nDataItems,]
+    W1.chain[[1]]              <- W1
+    sigma21.chain[1]           <- sigma2.1
+    
+    alpha.values <- c()
+    alpha.values[1] <- alpha
+    
+    current_temp    <- c()     # saving the cooling temperature
+    current_temp[1] <- start_temp
+    
+    converged  <- FALSE    # converge indicator
+    
+    
+    i <- 2 # initialise the iteration counter
+    while((!converged) & (i < nIterations)) { 
+      #cat("Starting sample ", i, "...", fill=TRUE)
+      
+      # Step 1: sample a random permutation of {1,..., nDataItems} 
+      tau <- sample(1:nDataItems, nDataItems, replace = FALSE)
+      
+      
+      # Step 2: resample the cluster indicators
+      for (j in tau){
+        # remove the sufficient statistics of z[j,] from the old cluster + change the number of points in the cluster from which we remove z[j,]
+        if (nClPoints[Cind[j,(i-1)]]>2){
+          mean.ppca[Cind[j,i-1],]  <- mean.new(mean.ppca[Cind[j,i-1],],nClPoints[Cind[j,i-1]], z[j,])
+          nClPoints[Cind[j,i-1]]   <- nClPoints[Cind[j,i-1]] - 1
+        } else {   
+          if (nClPoints[Cind[j,i-1]]==1){
+            nClPoints[Cind[j,i-1]] <- nClPoints[Cind[j,i-1]] - 1
+            mean.ppca[Cind[j,i-1],]<- rep(NA, nPcomponents)
+            #cov.ppca[[Cind[j,i-1]]]<- NA
+          } 
+          else { # if there are two data points
+            if (nClPoints[Cind[j,i-1]]==2){
+              #cov.ppca[[Cind[j,i-1]]]  <- diag(1,nPcomponents)
+              mean.ppca[Cind[j,i-1],]  <- mean.new(mean.ppca[Cind[j,i-1],],nClPoints[Cind[j,i-1]], z[j,])
+              nClPoints[Cind[j,i-1]]   <- nClPoints[Cind[j,i-1]] - 1
+            }
+          } 
+        }
+        
+        # create empty vectors for the prior and predictive probabilities of joining an existent cluster
+        logprior.ex     <- rep(NA, length(nClPoints))
+        pr.loglikelihood<- rep(NA, length(nClPoints))
+        
+        for (k in which(nClPoints>0)) {
+          
+          # compute the predictive likelihood of joining existent cluster 
+          pr.loglikelihood[k]    <- dmvnorm(z[j,], mean.ppca[k,] , sigma = diag(1,nPcomponents), log = TRUE)+ dmvnorm(dataMatrix[j,], z[j,]%*%t(W1), sigma = sigma2.1*diag(1,nFeatures), log = TRUE)
+          
+          # compute the prior of joining existent cluster 
+          logprior.ex[k]       <- log(nClPoints[k]/(alpha+nDataItems-1))
+          # print(nClPoints[k]/(alpha+nDataItems-1))
+        }   
+        
+        # create an empty vector to store posterior probabilities
+        logposterior.prob <- rep(NA, length(nClPoints)+1)
+        
+        # compute the predictive likelihood of joining a new cluster
+        prnew.loglikelihood <- dmvnorm(z[j,], rep(0,nPcomponents), sigma = diag(1,nPcomponents), log = TRUE)+dmvnorm(dataMatrix[j,], z[j,]%*%t(W1), sigma = sigma2.1*diag(1,nFeatures), log = TRUE)
+        
+        # compute the prior of joining a new cluster 
+        logprior.new         <- log(alpha/(alpha+nDataItems-1))
+        #print(alpha/(alpha+nDataItems-1))
+        # normalise p(c_i|.)  
+        for (m in which(nClPoints>0)){
+          logposterior.prob[m]<- logprior.ex[m] + pr.loglikelihood[m]
+        }
+        
+        logposterior.prob[length(nClPoints)+1] <- logprior.new + prnew.loglikelihood
+        # print(logposterior.prob)
+        # sample from the posterior - add to the most likely cluster
+        Cind[j,i]  <- which.max(logposterior.prob)
+        
+        if (Cind[j,i]==(length(nClPoints)+1)) {         # that's the increased number of clusters 
+          Cind[j,i] = which.min(c(nClPoints, 0))  # add it to the first cluster without any data points
+          
+          # if we start a new cluster, the mean = observation, cov = identity matrix, nClPoints = 1
+          
+          mean.ppca[Cind[j,i],]   <- z[j,]
+          nClPoints[Cind[j,i]]    <- 1
+        } else {
+          # add z[j,] sufficient statistics for an existing cluster + increase the number of data points in the corresponding cluster
+          
+          mean.ppca[Cind[j,i],] <- mean.add(mean.ppca[Cind[j,i],], nClPoints[Cind[j,i]], z[j,])
+          nClPoints[Cind[j,i]]  <- nClPoints[Cind[j,i]] + 1
+        }
+      }
+      ########### SPLIT-MERGE #######
+      clustersLess10 = which(nClPoints<5 & nClPoints>0, arr.ind = TRUE)
+      
+      if (length(clustersLess10)>=1){
+        # divide the clusters into 2 groups = those with fewer than 10 points and those with more than 10 points
+        clustersLess10 = which(nClPoints<5 & nClPoints>0, arr.ind = TRUE)
+        #print(clustersLess10)
+        clustersMore10 = which(nClPoints>=5, arr.ind = TRUE)
+        #print(clustersMore10)
+        
+        # number of points with allocation in clustersLess10
+        num.points <- length(which(Cind[,i]%in%clustersLess10))
+        
+        
+        # points which need the reallocation
+        z.all      <- z[which(Cind[,i]%in%clustersLess10, arr.ind = TRUE),]
+        
+        
+        # keep the indices 
+        z.ind     <- which(Cind[,i]%in%clustersLess10, arr.ind = TRUE)
+        
+        
+        clustersWithPoints = which(nClPoints>0)
+        old.allocation     <- Cind[,i]                                 # keep the old allocation
+        
+        
+        
+        # new allocation vector
+        new.allocation     <- Cind[,i]
+        
+        # reallocate the points from the small clusters to the most probable cluster
+        # compute the probabilities of joining any of the clusters with more than 10 points
+        if (num.points==1){
+          prior      <- rep(NA, length(clustersMore10))
+          likelihood <- rep(NA, length(clustersMore10))
+          posterior  <- rep(NA, length(clustersMore10))
+          
+          for (v in 1:length(clustersMore10)){
+            prior[v]       <- log(nClPoints[clustersMore10[v]]/(nDataItems-num.points+alpha-1)) # check what needs to go in the place of nClPoints[v] and the mean.ppca
+            likelihood[v]  <- dmvnorm(z.all, mean.ppca[clustersMore10[v],], diag(1,nPcomponents), log = TRUE) + dmvnorm(dataMatrix[z.ind, ], z.all%*%t(W1), sigma2.1*diag(1,nFeatures), log = TRUE) 
+            posterior[v]   <- prior[v] + likelihood[v]
+          }
+          new.allocation[z.ind] <- clustersMore10[which.max(posterior)]
+        }
+        
+        else{
+          for (t in 1:num.points){
+            prior      <- rep(NA, length(clustersMore10))
+            likelihood <- rep(NA, length(clustersMore10))
+            posterior  <- rep(NA, length(clustersMore10))
+            
+            for (u in 1:length(clustersMore10)){
+              prior[u]       <- log(nClPoints[clustersMore10[u]]/(nDataItems-num.points+alpha-1)) # check what needs to go in the place of nClPoints[v] and the mean.ppca
+              likelihood[u]  <- dmvnorm(z.all[t,], mean.ppca[clustersMore10[u],], diag(1,nPcomponents), log = TRUE) + dmvnorm(dataMatrix[z.ind[t], ], z.all[t,]%*%t(W1), sigma2.1*diag(1,nFeatures), log = TRUE) 
+              posterior[u]   <- prior[u] + likelihood[u]
+              
+            }
+            
+            new.allocation[z.ind[t]] <- clustersMore10[which.max(posterior)]
+            
+          }
+        }
+        
+        # update clusters with points and nClpoints. update the cluster means
+        
+        
+        newnClPoints <- rep(NA, nDataItems)
+        new.means    <- matrix(data = NA, nrow = nDataItems, ncol = nPcomponents)
+        
+       
+        for (s in clustersWithPoints){ 
+          if (length(which(new.allocation==s)>1)){
+            newnClPoints[s] <- length(which(new.allocation==s))
+            new.means[s,]   <- colMeans(z[which(new.allocation==s),])
+            
+          }
+          else {
+            if (length(which(new.allocation==s)==1)) {
+              newnClPoints[s] <- 1
+              new.means[s,]   <- z[which(new.allocation==s),]
+            }
+            else{
+              newnClPoints[s] <- 0
+            }
+          }
+          
+        }
+        
+        
+    
+        current_temp[i] <- current_temp[i-1]*C_k
+      
+        
+        # compute the probability to make the move and accept/reject
+        log.1 <- logposterior_BC_NLP_1ds(dataMatrix, nPcomponents, z,new.allocation, clustersMore10, W1,sigma2.1, C.1, length(clustersMore10), new.means[clustersMore10,], alpha,g, newnClPoints[clustersMore10])
+        log.2 <- logposterior_BC_NLP_1ds(dataMatrix, nPcomponents, z,old.allocation, clustersWithPoints, W1, sigma2.1,C.1,length(clustersWithPoints), mean.ppca[clustersWithPoints,], alpha,g, nClPoints[clustersWithPoints])
+        
+        prob_merge <- exp((log.1-log.2)/current_temp[i])
+        #print(prob_merge)
+        if (runif(1)<prob_merge){ 
+          Cind[,i] <- new.allocation
+          nClPoints <- c()
+          #print(Cind[,i])
+          for (f in clustersWithPoints){ 
+            if (length(which(new.allocation==f)>1)){
+              nClPoints[f]   <- newnClPoints[f]
+              mean.ppca[f,]  <- new.means[f,]
+              
+            }
+            else {
+              if (length(which(new.allocation==f)==1)) {
+                nClPoints[f]    <- 1
+                mean.ppca[f,]   <- z[which(new.allocation==f),]
+              }
+              else{
+                nClPoints[f]    <- 0
+              }
+            }
+          } 
+        }
+        
+        else{
+          # reject the move 
+          Cind[,i] <- old.allocation
+        }
+      } 
+      
+      ###############################
+      
+      clustersWithPoints = which(nClPoints>0)
+      
+      current_temp[i] <- current_temp[i-1]*C_k
+      #current_temp[i] <- 1/log(i)   # logarithmic
+      #current_temp[i]  <- 0.95^i    # exponential
+      
+      prop.update <- MH_cont_SA_NLP1ds(z, current_temp[i],  dataMatrix, nPcomponents,Cind[,i], clustersWithPoints, W1,  sigma2.1, C.1,length(clustersWithPoints), mean.ppca[clustersWithPoints,], alpha,g, nClPoints[clustersWithPoints])
+      z           <- prop.update$zs
+      W1          <- prop.update$W1
+      mean.ppca[clustersWithPoints,] <- prop.update$means
+      sigma2.1    <- prop.update$sigma2.1
+      
+      #plot(z, col = Cind[,i])
+      # record the updates of the parameters
+      z.chain[(nDataItems*(i-1)+1):(nDataItems*i),]    <- z
+      mean.chain[(nDataItems*(i-1)+1):(nDataItems*i),] <- mean.ppca
+      W1.chain[[i-1]]     <- W1
+      sigma21.chain[i-1]  <- sigma2.1
+      
+      clustersWithPoints = which(nClPoints>0, arr.ind = TRUE)
+      
+      
+      
+      
+      logposterior[i] <- logposterior_BC_NLP_1ds(dataMatrix, nPcomponents, z, Cind[,i], clustersWithPoints, W1, sigma2.1, C.1,  length(clustersWithPoints), mean.ppca[clustersWithPoints,],  alpha,g, nClPoints[clustersWithPoints])
+      if (logposterior[i]> max.logposterior){
+        max.logposterior <- logposterior[i]
+        #print(max.logposterior)
+        max.partition    <- Cind[,i]
+      }
+      
+      
+      #alpha <- alpha.sample(alpha,1,1,nDataItems, length(clustersWithPoints))
+      alpha.values[i] <- alpha
+      
+      
+      if (i==2){
+        converged =  FALSE
+      }
+      if (i>2){
+        converged = abs(logposterior[i-1] - logposterior[i]) <= tol
+      }
+      i <- i+1 
+      
+    }
+    
+    
+  }
+  
+  out = list(clusters = Cind, cluster_points = nClPoints, number_clusters = length(which(nClPoints!=0)), best_partition = max.partition, max_logposterior = max.logposterior, logposteriors= logposterior, chainz = z.chain,  temperatures = current_temp, chaineps1 = sigma21.chain,convergence = converged,alphas= alpha.values)
+  
+}
