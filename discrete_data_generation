@@ -1,0 +1,40 @@
+# generate categorical data
+
+nDataItems   <- 150
+nFeatures    <- 100
+nCategories  <- rep(2,100)
+nPcomponents <- 2
+
+set.seed(1234)
+
+# dataset 1 ####
+
+mu.1 <- rmvnorm(1, rep(0,nPcomponents), diag(1,nPcomponents))
+mu.2 <- rmvnorm(1, rep(20,nPcomponents), diag(1,nPcomponents))
+
+
+z.1s  <- matrix(data = NA, nrow = nDataItems, ncol = nPcomponents)
+z.1s[1:50,]    <- rmvnorm(50, mu.11, diag(1,nPcomponents))
+z.1s[51:150,]  <- rmvnorm(100, mu.21, diag(1,nPcomponents))
+
+W.d <- list()
+mu.d<- list()    
+
+# initialise loadings and offset vectors
+for (r in 1:nFeatures){
+  W.d[[r]] <- rmvnorm(nPcomponents, mean = rep(0,nCategories[r]), sigma = diag(1,nCategories[r]))
+  mu.d[[r]] <- rmvnorm(1, mean = rep(0,nCategories[r]), sigma  = diag(1,nCategories[r]))
+}
+
+X.1 <- matrix(data=NA, nrow = nDataItems, ncol = nFeatures)
+#X.21 <- matrix(data=NA, nrow = nDataItems, ncol = nFeatures)
+
+for (i in 1:150){
+  for (j in 1:nFeatures){
+    X.1[i,j] <- sample(1:nCategories[j], 1, replace = TRUE, prob = softmax(z.1s[i,]%*%W.d[[j]]+mu.d[[j]]) )
+  }
+  
+ 
+}
+
+
