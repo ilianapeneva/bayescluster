@@ -1,0 +1,63 @@
+# Simulated annealing (BayesCluster discrete) with non-local priors
+
+# latent variables proposal
+proposalZs <- function(latentvar){
+  random.noise <- rmvn(nrow(latentvar), rep(0,ncol(latentvar)), diag(0.001, ncol(latentvar)))
+  return(latentvar+random.noise)
+}
+
+#offset proposal
+proposalOffsets <- function(offset){
+  propOffsets <- list()
+  for (i in 1:length(offset)){
+    random.noise    <- rmvnorm(1, rep(0,length(offset[[i]])), diag(0.001,length(offset[[i]])))
+    propOffsets[[i]]<- offset[[i]] + random.noise
+  }
+  return(propOffsets)
+}
+
+# cat loadings proposal
+proposalWds <- function(Wloadings){
+  propWds <- list()
+  for (i in 1:length(Wloadings)){
+    random.noise <- matrix(runif(prod(dim(Wloadings[[i]])), min = -0.0001, max = 0.0001), nrow = nrow(Wloadings[[i]]), ncol = ncol(Wloadings[[i]]))
+    propWds[[i]] <- Wloadings[[i]] + random.noise
+  }
+  return(propWds)
+}
+
+
+MH_cont_NLP_1discds<- function(z.s, current_t, dataMatrix, nPcomponents, nCategories, Cind_i, ClustersWithPoints, W.ds, mu.ds, Nclusters, meanClust, alpha,g, nClPoints){
+  
+  propOffsets  <- proposalOffsets(mu.ds)
+  propZ        <- proposalZs(z.s)                      # get the proposals for the latent variables
+  propWds      <- proposalWds(W.ds)
+  propMeans    <- matrix(data = NA, nrow = Nclusters, ncol = nPcomponents)
+  
+  for (i in 1:Nclusters){
+    propMeans[i,]   <- colMeans(as.matrix(propZ[which(Cind_i==ClustersWithPoints[i]),]))
+  }
+  
+  logposterior.1 <- logposterior_BC_NLP_1discds(dataMatrix, nPcomponents, nCategories, propZ,Cind_i, ClustersWithPoints, propWds, propOffsets, Nclusters, propMeans, alpha, g, nClPoints)
+  logposterior.2 <- logposterior_BC_NLP_1discds(dataMatrix, nPcomponents, nCategories, z.s, Cind_i, ClustersWithPoints, W.ds, mu.ds, Nclusters, meanClust, alpha,g, nClPoints)
+  
+  # the probability of a move
+  prob     = exp((logposterior.1-logposterior.2)/current_t) # change in the posterior
+  #print(prob)
+  if (runif(1)<prob){
+    newZ       = propZ         # accept the proposal
+    newWds     = propWds
+    newMeans   = propMeans
+    newOffsets = propOffsets
+    
+  }
+  else{ 
+    newZ       = z.s    # reject the proposal
+    newWds     = W.ds
+    newMeans   = meanClust
+    newOffsets = mu.ds
+  }
+  
+  return(list(zs = newZ, Wd = newWds, means = newMeans, offsets = newOffsets))  
+  
+} 
